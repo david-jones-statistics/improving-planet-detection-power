@@ -1,0 +1,297 @@
+# Code to implement genelization of the Rajpaul et al. 2015 model for stellar activity proxies 
+# David E Jones, SAMSI, Dec 2016
+
+##############################################################################################################
+
+
+gpca_max_signal <- 7.471059 # maximum semi-amplitude of stellar activity in m/s
+K_gpca_original <- c(0.1,seq(0.2,1.5,0.05),2,5,7.5,10,seq(15,100,5)) # planet signal in m/s
+rounding_mult <- 1000  # multiplier for save names
+K_vec <- round(rounding_mult*K_gpca_original/gpca_max_signal) # velocity semi-amplitude (percentage of stellar activity signal)
+tau_vec <- c(7) # planet orbital period
+e_vec <- c(0.2) # eccentricity
+basis_type <- "clean"
+model_name <- "aic1"
+
+# Specify dataset to analyze (semi-amplitude, orbital period, repetition)
+jid <- 1
+reps_per_set <- 50
+dataset_num <- jid - floor((jid-1)/reps_per_set)*reps_per_set
+jid2 <- ceiling(jid/reps_per_set)
+K_vec_num <- jid2 - floor((jid2-1)/length(K_vec))*length(K_vec)
+jid3 <- ceiling(jid/(reps_per_set*length(K_vec)))
+tau_vec_num <- jid3 - floor((jid3-1)/length(tau_vec))*length(tau_vec)
+e_vec_num <- 1
+
+# Set directory
+output_name <- "gpca_hd"
+home <- getwd()
+data_home <- paste(home,"/final data/",basis_type,"/",output_name,"_fine_datasets/",sep="")
+setwd(home)
+
+# Load required functions
+source("./functions/load_main_functions.R")
+load_main_functions()
+
+output_by_model_data_initial <- list()
+max_log_like_by_model_data_initial <- list()
+initial_value_by_model_data_initial <- list()
+mean_spec_value_by_model_data_initial <- list()
+
+n.all <- 100
+missing.data.index.store <- list()
+data_num <- 1
+missing.data.index.store[[1]] <- NULL
+missing.data.index.store[[2]] <- c(1,2,3) # otherwise list is not formed
+
+data_names <- c("all")
+analysis_names <- c("no_planet_model","planet_model")
+
+num_initializations <- c(12,1)
+
+start.time <- proc.time()
+
+for (analysis_loop in 1:2){
+  
+  if (analysis_loop==1){
+    fit_planet <- FALSE
+  } else {
+    fit_planet <- TRUE
+    planet_log_likes_store <- list()
+  }
+  
+  output_by_data_initial <- list()
+  max_log_like_by_data_initial <- list()
+  initial_value_by_data_initial <- list()
+  
+  for (data_loop in 1:data_num){
+    
+    output_store <- list()
+    max_log_like_store <- numeric(num_initializations[analysis_loop])
+    initial_value_store <- list()
+    
+    # Load initial optimizer
+    setwd(home)
+    source("./functions/optimize_parameters123.R")
+    
+    for (initial_loop in 1:num_initializations[analysis_loop]){
+      
+      # Get output data
+      num_outputs <- 3
+      n <- n.all # Number of consecutive phase observations 
+      plot.data <- FALSE
+      make_cov_mat <- FALSE
+      data <- get_data(paste(data_home,"fine_scale_",output_name,"_planet_Kpercent",K_vec[K_vec_num],"_period",tau_vec[tau_vec_num],"_e",e_vec[e_vec_num],"_dataset",dataset_num,".RData",sep=""),n,num_outputs,missing.data.index.store[[data_loop]],plot.data,make_cov_mat)
+      n <- data$n # Update to reflect missing data
+      
+      # Specify model - num_outputs rows, 4 columns (allowed parameters)
+      # Ones indicate parameters should be optimized 
+      # Zeros indicate parameters fixed to zero 
+      model_mat <- matrix(0,num_outputs,4)
+      colnames(model_mat) <- c("GP.coeff","dGP.coeff","ddGP.coeff","extra.GP.coeff")
+      rownames(model_mat) <- character(num_outputs)
+      for (i in 1:num_outputs){
+        rownames(model_mat)[i] <- paste(output_name,i,sep="")
+      }
+      model_mat[1,c(1,2)] <- 1 # Output1 (e.g. GPCA1)
+      model_mat[2,c(1,3)] <- 1 # Output2
+      model_mat[3,c(2)] <- 1 # Output3
+      model_spec <- list(model_mat=model_mat,model_paras_initial=c(t(model_mat)),add.nugget=FALSE,fixed_log_nugget=rep(log(0.02),num_outputs),opt.nugget=FALSE,opt_stellar_period=TRUE,num_outputs=num_outputs)
+      model_mat
+      # GP para bounds
+      gp_para_bounds <- list()
+      gp_para_bounds$cov_para_bounds <- list()
+      gp_para_bounds$cov_para_bounds[[1]] <- c(2,-3,-3)  
+      gp_para_bounds$cov_para_bounds[[2]] <- c(2.5,10,10)
+      initial_cov_para_bounds <- gp_para_bounds$cov_para_bounds
+      gp_para_bounds$extra_cov_para_bounds <- list()
+      gp_para_bounds$extra_cov_para_bounds[[1]] <- gp_para_bounds$cov_para_bounds[[1]]
+      gp_para_bounds$extra_cov_para_bounds[[2]] <- gp_para_bounds$cov_para_bounds[[2]]
+      if (analysis_loop==1){
+        if (initial_loop <= 3){
+          initial_cov_para_bounds[[2]][3] <- 0
+        }
+        if (initial_loop > 3 & initial_loop <= 6){
+          initial_cov_para_bounds[[2]][2] <- 0
+        }
+        if (initial_loop > 9){
+          # Change optimizer
+          setwd(home)
+          source("./functions/optimize_parameters2.R")
+        }
+      }
+      model_spec$gp_para_bounds <- gp_para_bounds
+      model_spec$initial_cov_para_bounds <- initial_cov_para_bounds
+      model_spec$priors <- list()
+      model_spec$priors <- NULL # set_priors()
+      model_spec$use_priors <- FALSE
+      # Set log likelihood function (or log posterior)
+      if (model_spec$use_priors){
+        like_fun2 <- general_gp_log_post
+        print("ERROR: no packed version of posterior coded up")
+      } else {
+        like_fun2 <- general_gp_log_lik_packed
+      }
+      
+      # Specify output mean model
+      if (fit_planet){
+        planet_period_search <- FALSE # Have seperate routine 
+        location_paras_index <- c(5,7:(5+num_outputs))
+        planet_para_names <- c("K","M0","tau","e","gamma","w")
+        # Indices of parameters to be optimized on log scale
+        log_scale_index <- c(1,3)
+        # Indices of parameters to be optimized on logit scale
+        logit_scale_index <- c() #c(4,6)
+        # Key parameters are optimized in separate loop
+        key_planet_paras_index <- c(1:4,6)
+        rv_range <- diff(range(data$y[,1]))
+        mean_paras_bounds <- list() 
+        #log(0.0001)
+        mean_paras_bounds[[1]] <- c(log(0.0001),0,log(3),0.05,-2,-pi/2,rep(-2,num_outputs-1)) # bounds have to be on optimization scale
+        mean_paras_bounds[[2]] <- c(log(1),2*pi,log(20),0.9,2,1.5*pi,rep(2,num_outputs-1)) # bounds have to be on optimization scale
+        planet_period_index <- 3
+        upper_freq <- exp(-mean_paras_bounds[[1]][planet_period_index])
+        lower_freq <- exp(-mean_paras_bounds[[2]][planet_period_index])
+        log_per_guesses <- -rev(log(seq(lower_freq,upper_freq,length.out=31))) # Not fine enough - also freq is not very helpful for simulation study
+        # Various settings for flexibility
+        # - planet_indicator is for mean model use 
+        # - planet_opt is to choose whether to optimize the planet parameters
+        mean_paras <-  c(log(0.01),0.1,log(8),0.2,0,0.1,rep(0,num_outputs-1))
+        names(mean_paras) <- c(planet_para_names,paste("mean_proxy",2:num_outputs,sep=""))
+        mean_spec <- list(opt.mean=TRUE,opt_index=1:length(mean_paras),planet_indicator=TRUE,planet_period_index=planet_period_index,
+                          key_planet_paras_index=key_planet_paras_index,mean_paras_bounds=mean_paras_bounds,log_per_guesses=log_per_guesses,
+                          planet_para_names=planet_para_names,log_scale_index=log_scale_index,logit_scale_index=logit_scale_index,
+                          mean_paras=mean_paras,planet_period_search=planet_period_search)
+      } else {
+        location_paras_index <- 1:num_outputs
+        log_scale_index <- c()
+        logit_scale_index <- c()
+        mean_paras_bounds <- list() 
+        mean_paras_bounds[[1]] <- rep(-2,num_outputs) # bounds have to be on optimization scale
+        mean_paras_bounds[[2]] <- rep(2,num_outputs) # bounds have to be on optimization scale
+        mean_paras <-  rep(0,num_outputs)
+        names(mean_paras) <- paste("mean_proxy",1:num_outputs,sep="")
+        mean_spec <- list(opt.mean=TRUE,opt_index=1:num_outputs,planet_indicator=FALSE,planet_period_index=NULL,
+                          key_planet_paras_index=c(),mean_paras_bounds=mean_paras_bounds,
+                          planet_para_names=NULL,log_scale_index=log_scale_index,logit_scale_index=logit_scale_index,
+                          mean_paras=mean_paras,planet_period_search=FALSE)
+      }
+      
+      
+      # Plotting and output options (set to NULL for defaults (no save))
+      plot_out_spec <- list()
+      plot_out_spec$show_progress <- FALSE
+      plot_out_spec$plot_progress <- FALSE
+      plot_out_spec$show_log_like_progress <- FALSE
+      plot_out_spec$plot_log_like <- FALSE
+      plot_out_spec$save_plot <- FALSE
+      plot_out_spec$filename <- paste(home,"/plots/",output_name,"_",analysis_names[analysis_loop],"_bic_model_null_dataset_",jid,".pdf",sep="")
+      pdf.width <- 10
+      pdf.height <- 10
+      plot_gaps <- c(5,5,3,2) # bottom, left, top, right
+      image_gaps <- c(1,1,1,1) # bottom, left, top, right
+      axis_gaps <- c(3,1,0) # label, number, tick (?)
+      mag_levels <- c(1.5,1.5,1.25,2)  # main, lab, axis, line
+      xlim_plot <- c()
+      plot_settings <- list(pdf.width=pdf.width,pdf.height=pdf.height,
+                            plot_gaps=plot_gaps,image_gaps=image_gaps,
+                            axis_gaps=axis_gaps,mag_levels=mag_levels,
+                            xlim_plot=xlim_plot)
+      plot_out_spec$plot_settings <- plot_settings
+      
+      # Fit model
+      cross.validation <- FALSE # If missing data indicated then choose if to calculate CV criteria 
+      initial_value_spec <- list()
+      initial_value_spec$num_initializations <- 1
+      initial_value_spec$multi_initializations <- FALSE #TRUE
+      randomize_initial <- ifelse(initial_loop==1,FALSE,TRUE)
+      # If multi_initializations==FALSE then need to set initialization
+      if (fit_planet==FALSE & initial_value_spec$multi_initializations==FALSE){
+        opt_index <- mean_spec$opt_index
+        if (randomize_initial){
+          mean_initial <- runif(length(opt_index),min=mean_paras_bounds[[1]][opt_index],max=mean_paras_bounds[[2]][opt_index])
+          initial_value_spec$initial_value <- c(runif(3,c(2,-1,1),c(2.5,0,2)),runif(3,c(2,-1,1),c(2.5,0,2)),mean_initial)
+        } else {
+          mean_initial <- mean_spec$mean_paras
+          initial_value_spec$initial_value <- c(log(data$stellar_period),c(1,-1),log(data$stellar_period),c(1,-1),mean_initial)
+        }
+      }
+      
+      if (fit_planet==TRUE){
+        
+        setwd(home)
+        source("./functions/optimize_parameters_regress_planet.R")
+        source("./functions/new_planet_optimizer_reuse_mats2.R")
+        
+        null_best_index <- which.max(max_log_like_by_model_data_initial[[1]][[data_loop]])
+        null_best_output <- output_by_model_data_initial[[1]][[data_loop]][[null_best_index]]
+        null_best_fit <- null_best_output$optim_out
+        if (plot.data){
+          abline(v=null_best_fit$max_err_location,col=2) 
+        }
+        for_like <- null_best_fit$for_like
+        key_quantities <- like_fun2(for_like)[[2]]
+        shrink <- key_quantities$shrink
+        log_normalizing <- key_quantities$log_normalizing
+        null_mean_paras <- for_like$mean_paras
+        for_like$mean_paras <- mean_paras
+        for_like$mean_paras[location_paras_index] <- null_mean_paras
+        rv_errs <- null_best_fit$rv_errs 
+        for_like$mean_spec <- mean_spec
+        for_like$model_spec <- model_spec
+        final_opt_index <- c(1:4,6)
+        planet_out <- planet_optimizer_reuse_mats2("mean_paras",final_opt_index,3,2,log_normalizing,shrink,mean_paras_bounds,for_like,rv_errs)
+        
+        planet_log_likes <- numeric(3)
+        names(planet_log_likes) <- c("grid","initial.opt","final.opt")
+        planet_log_likes[1] <- planet_out$grid_max_log_like
+        planet_log_likes[2] <- -planet_out$out$value
+        
+        for_like$mean_paras[final_opt_index] <- planet_out$out$par
+        for_like$mean_paras[setdiff(1:6,final_opt_index)] <- planet_out$for_like$mean_paras[setdiff(1:6,final_opt_index)]
+        model_spec$model_paras_initial <- for_like$model_paras 
+        initial_value_spec$initial_value <- c(for_like$cov_paras,for_like$extra_cov_paras,for_like$mean_paras)
+        
+      }
+      
+      print("Initial value: ")
+      print(initial_value_spec$initial_value)
+      fit_output <- fit_activity_gp_model(data,model_spec,mean_spec,select_cov="quasi_periodic_",custom_cov_spec=NULL,plot_out_spec,missing.data.index=missing.data.index.store[[data_loop]],initial_value_spec,cross.validation)
+      
+      output_store[[initial_loop]] <- fit_output
+      max_log_like_store[initial_loop] <- max(as.numeric(fit_output$optim_out$log_like_store))
+      if (fit_planet==TRUE){
+        planet_log_likes[3] <- max_log_like_store[initial_loop]
+        planet_log_likes_store[[initial_loop]] <- planet_log_likes
+      }
+      initial_value_store[[initial_loop]] <- initial_value_spec$initial_value
+      
+    }
+    
+    output_by_data_initial[[data_loop]] <- output_store
+    max_log_like_by_data_initial[[data_loop]] <- max_log_like_store
+    initial_value_by_data_initial[[data_loop]] <- initial_value_store
+    
+  }
+  
+  output_by_model_data_initial[[analysis_loop]] <- output_by_data_initial
+  max_log_like_by_model_data_initial[[analysis_loop]] <- max_log_like_by_data_initial
+  initial_value_by_model_data_initial[[analysis_loop]] <- initial_value_by_data_initial
+  
+  names(output_by_model_data_initial[[analysis_loop]]) <- data_names
+  names(max_log_like_by_model_data_initial[[analysis_loop]]) <- data_names
+  names(initial_value_by_model_data_initial[[analysis_loop]]) <- data_names
+  
+}
+
+end.time <- proc.time()
+time_taken <- end.time-start.time
+
+
+names(output_by_model_data_initial) <- analysis_names
+names(max_log_like_by_model_data_initial) <- analysis_names
+names(initial_value_by_model_data_initial) <- analysis_names
+
+for_like <- fit_output$optim_out$for_like 
+
+save(list=c("K_gpca_original","gpca_max_signal","for_like","time_taken","missing.data.index.store","data","model_spec","mean_spec","output_by_model_data_initial","max_log_like_by_model_data_initial","initial_value_by_model_data_initial","plot_out_spec","planet_out","planet_log_likes_store"),file=paste(home,"/output/",basis_type,"_fine_range_",output_name,"_",model_name,"_model_planet_Kpercent",K_vec[K_vec_num],"_period",tau_vec[tau_vec_num],"_e",e_vec[e_vec_num],"_dataset",dataset_num,".RData",sep=""))

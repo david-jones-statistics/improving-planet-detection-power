@@ -1,0 +1,54 @@
+dt2dt2_cov_fun <- function(t1,t2,params){  
+  
+  b <- exp(params[1])
+  p <- matern_p
+  v <- p+0.5
+  const <- sqrt(2*v)
+  coeffs <- numeric(p+1)
+  for (i in 0:p){
+    coeffs[p+1-i] <- (gamma(p+1)/gamma(2*p+1))*(factorial(p+i)/(factorial(i)*factorial(p-i)))*(sqrt(8*v)/b)^(p-i)
+  }
+  
+  abs.t.diff <- abs(t1-t2)
+  t.diff <- t2-t1 # Derivative process should be first here
+  sign_diff <- sign(t.diff)
+  
+  term1 <- 0
+  if (p >= 1){
+    for (i in 1:p){
+      term1 <- term1 + i*coeffs[i+1]*abs.t.diff^(i-1)   
+      # Changes form slightly because need to actually multiply by sign before evaluating
+      # becuase of the diff=0 case
+    }
+    term1 <- term1*exp(-const*abs.t.diff/b)
+  }
+  
+  term2 <- 0
+  if (p >= 2){
+    for (i in 2:p){
+      term2 <- term2 + i*(i-1)*coeffs[i+1]*abs.t.diff^(i-2)
+    }
+    term2 <- term2*exp(-const*abs.t.diff/b)
+  }
+  
+  term3 <- 0
+  if (p >= 3){
+    for (i in 3:p){
+      term3 <- term3 + i*(i-1)*(i-2)*coeffs[i+1]*abs.t.diff^(i-3)
+    }
+    term3 <- term3*exp(-const*abs.t.diff/b)
+  }
+  
+  term4 <- 0
+  if (p >= 4){
+    for (i in 4:p){
+      term3 <- term4 + i*(i-1)*(i-2)*(i-3)*coeffs[i+1]*abs(t.diff)^(i-4)
+    }
+    term4 <- term4*exp(-const*abs.t.diff/b)
+  }
+  
+  value <- -(const/b)^2*dtdt_cov_fun(t1,t2,params) - (2*const^3/b^3)*term1/b^3 + ((3*const^2/b^2)+(2*const^2/b^2))*term2/b^2 - 4*const*term3/b + term4
+  
+  return(value)
+  
+}
