@@ -3,6 +3,7 @@ Reference:
 Jones D. E., Stenning D. C., Ford E. B., Wolpert R. L., Loredo T. J., Dumusque, X. (2017+). Improving Exoplanet Detection Power: Multivariate Gaussian Process Models for Stellar Activity. URL: https://arxiv.org/abs/1711.01318
 
 This code implements the methodology of Jones et al. (2017+):
+
 i) Customized PCA for constructing stellar activity indicators
 ii) Maximum likelihood fitting of multivariate GP models for stellar activity 
 
