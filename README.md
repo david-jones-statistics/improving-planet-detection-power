@@ -4,8 +4,8 @@ Jones D. E., Stenning D. C., Ford E. B., Wolpert R. L., Loredo T. J., Dumusque, 
 
 This code implements the methodology of Jones et al. (2017+):
 
-i) Customized PCA for constructing stellar activity indicators
-ii) Maximum likelihood fitting of multivariate GP models for stellar activity 
+- Customized PCA for constructing stellar activity indicators
+- Maximum likelihood fitting of multivariate GP models for stellar activity 
 
 Note: the code is currently being organized into a more user-friendly format. 
 
